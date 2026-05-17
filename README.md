@@ -1,7 +1,6 @@
 # 🚀 The Ultimate Go (Golang) Interview Preparation Guide
 
 [![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev/)
-[![Awesome](https://img.shields.io/badge/Awesome-Go-green?style=for-the-badge&logo=awesome)](https://github.com/avelino/awesome-go)
 [![Interview Ready](https://img.shields.io/badge/Interview-Ready-orange?style=for-the-badge)](https://github.com/Protocol-Lattice/golang-interview-prep-in-english)
 
 Welcome to the **Ultimate Go Interview Preparation Guide**. This document has been meticulously designed and engineered to serve as a high-density, easily skimmable, and visually rich reference during live interviews, technical screens, or rapid pre-interview revision. 
