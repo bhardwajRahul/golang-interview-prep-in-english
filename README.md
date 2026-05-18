@@ -52,7 +52,7 @@ Go uses an **M:N user-space scheduler** to multiplex Goroutines across physical 
 
 ```mermaid
 graph TD
-    subgraph Go Runtime Scheduler
+    subgraph GRS ["Go Runtime Scheduler"]
         G1[Goroutine G1] -->|scheduled on| P1[Processor P1]
         G2[Goroutine G2] -->|waiting in LRQ| P1
         P1 -->|bound to| M1[OS Thread M1]
@@ -168,7 +168,7 @@ Go uses a concurrent, tri-color mark-and-sweep garbage collector designed for lo
 
 ```mermaid
 graph LR
-    subgraph Tri-Color GC State Machine
+    subgraph TCGC ["Tri-Color GC State Machine"]
         White[White Set<br>Unvisited / Sweep Candidates]
         Gray[Gray Set<br>Visited, Unexplored]
         Black[Black Set<br>Reachable & Fully Explored]
@@ -238,13 +238,13 @@ A slice is not an array; it is a **descriptor header** containing metadata that 
 
 ```mermaid
 graph TD
-    subgraph Slice Header Struct (24 Bytes)
+    subgraph SH ["Slice Header Struct (24 Bytes)"]
         Data["Data (uintptr Pointer to Backing Array)"]
         Len["Len (int = 3)"]
         Cap["Cap (int = 5)"]
     end
     
-    subgraph Backing Array in Memory
+    subgraph BAM ["Backing Array in Memory"]
         A0["Array[0] (Reachable)"]
         A1["Array[1] (Reachable)"]
         A2["Array[2] (Reachable)"]
