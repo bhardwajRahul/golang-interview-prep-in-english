@@ -307,6 +307,180 @@ An interface value is only considered `nil` if **both** the `type` and `data` fi
 
 ---
 
+### 📏 Struct Alignment & Memory Padding (The Silent Memory Waster)
+
+CPUs do not read memory one byte at a time; instead, they read in **word sizes** (typically 8 bytes on a 64-bit architecture). To optimize CPU memory access, compilers use memory alignment, inserting "padding bytes" to ensure fields align to boundaries of their type's size.
+
+#### Struct Size Paradox: Why Order Matters!
+
+Consider the following two structs containing identical fields, but arranged in different orders:
+
+```go
+type BadStruct struct {
+	A bool  // 1 byte
+	B int64 // 8 bytes
+	C bool  // 1 byte
+} // Size: 24 bytes! (83% wasted space)
+
+type GoodStruct struct {
+	B int64 // 8 bytes
+	A bool  // 1 byte
+	C bool  // 1 byte
+} // Size: 16 bytes! (25% wasted space)
+```
+
+#### Visualizing the Memory Layout
+
+##### ❌ `BadStruct` (24 Bytes)
+| Byte Offset | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Row 1 (0-7)** | `A` (bool) | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* |
+| **Row 2 (8-15)** | `B` (int64) | `B` (int64) | `B` (int64) | `B` (int64) | `B` (int64) | `B` (int64) | `B` (int64) | `B` (int64) |
+| **Row 3 (16-23)** | `C` (bool) | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* |
+
+*Reason:* An 8-byte field must start on an offset that is a multiple of 8. Therefore, 7 bytes of padding are added after `A`. Another 7 bytes of padding are added at the end of `C` to ensure the next struct in an array aligns correctly.
+
+##### ✅ `GoodStruct` (16 Bytes)
+| Byte Offset | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Row 1 (0-7)** | `B` (int64) | `B` (int64) | `B` (int64) | `B` (int64) | `B` (int64) | `B` (int64) | `B` (int64) | `B` (int64) |
+| **Row 2 (8-15)** | `A` (bool) | `C` (bool) | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* | 🚫 *Pad* |
+
+*Reason:* Grouping the smaller `bool` fields together allows them to fit within the same 8-byte word, saving an entire 8-byte block!
+
+> [!TIP]
+> **Interview Pro-Tip:** To instantly optimize memory usage of a struct, always **order fields from largest to smallest**.
+
+---
+
+### 🧩 Struct Embedding: Composition, Not Inheritance
+
+Go intentionally does not support class inheritance. Instead, it embraces the principle of **Composition over Inheritance** using **Struct Embedding**.
+
+#### What is Struct Embedding?
+When you define a struct field without an explicit field name, it is an **embedded (or anonymous) field**. The outer struct automatically gains access to all the fields and methods of the embedded struct. This mechanism is known as **field and method promotion**.
+
+```go
+type Engine struct {
+	HP int
+}
+
+func (e *Engine) Start() {
+	fmt.Println("Engine starting...")
+}
+
+type Car struct {
+	Engine // Embedded field (no name, only type)
+	Brand  string
+}
+```
+
+#### Key Rules of Embedding in Go
+
+1. **Composition, Not Subtyping:** A `Car` **contains** an `Engine`, but a `Car` is **not** an `Engine`. You cannot pass a `Car` value to a function expecting an `Engine`. There is no polymorphism via struct hierarchy in Go.
+2. **Method & Field Promotion:** Since `Engine` is embedded, we can call `car.Start()` and access `car.HP` directly, instead of writing `car.Engine.Start()` or `car.Engine.HP`.
+3. **Explicit Access (No Shadowing Lockout):** If the outer struct defines a field or method with the same name as an embedded one, it "shadows" (overrides) the embedded one. However, the embedded one is not lost; it remains accessible via its explicit type name:
+   ```go
+   type Car struct {
+       Engine
+       HP int // Shadows Engine.HP
+   }
+   
+   myCar := Car{}
+   myCar.HP = 200        // Outer HP
+   myCar.Engine.HP = 150 // Inner HP (still fully accessible)
+   ```
+4. **Interface Satisfaction:** If the embedded struct implements an interface, the outer struct automatically implements that interface too via method promotion.
+
+> [!IMPORTANT]
+> **Why Go Rejects Inheritance:**
+> Inheritance creates tight coupling between parent and child classes (the fragile base class problem). Struct embedding maintains complete independence between the components while providing the syntactic convenience of field/method delegation.
+
+---
+
+### 🔗 Context Tree Architecture & Internals
+
+`context.Context` is the standardized mechanism in Go for carrying deadlines, cancellation signals, and request-scoped values across API boundaries.
+
+#### The Context Interface
+Under the hood, a Context is defined by a simple interface containing four methods:
+```go
+type Context interface {
+    Deadline() (deadline time.Time, ok bool)
+    Done() <-chan struct{}
+    Err() error
+    Value(key any) any
+}
+```
+
+#### Under-the-Hood Concrete Structs
+1. **`emptyCtx`:** An empty, non-cancelable context with no values (returned by `context.Background()` or `context.TODO()`). It is internally represented as a simple custom integer (`type emptyCtx int`).
+2. **`cancelCtx`:** Formed using `WithCancel` or `WithDeadline`. It contains a mutex, a channel closed on cancellation, and a map of children:
+   ```go
+   type cancelCtx struct {
+       Context
+       mu       sync.Mutex
+       done     atomic.Value          // of chan struct{}
+       children map[canceler]struct{} // tracks child cancelCtxs to propagate cancel
+       err      error                 // returns non-nil after cancellation
+   }
+   ```
+3. **`valueCtx`:** Formed using `WithValue`. It bundles a single key-value pair and embeds a parent context.
+
+```mermaid
+graph TD
+    Parent[context.Background] -->|WithValue| ValCtx1[valueCtx: userID=42]
+    ValCtx1 -->|WithCancel| CanCtx[cancelCtx: WithCancel]
+    CanCtx -->|WithValue| ValCtx2[valueCtx: reqID=abc]
+    
+    style Parent fill:#CFD8DC,stroke:#607D8B,stroke-width:2px,color:#000
+    style ValCtx1 fill:#BBDEFB,stroke:#1976D2,stroke-width:2px,color:#000
+    style CanCtx fill:#FFCDD2,stroke:#D32F2F,stroke-width:2px,color:#000
+    style ValCtx2 fill:#BBDEFB,stroke:#1976D2,stroke-width:2px,color:#000
+```
+
+> [!WARNING]
+> **The $O(N)$ Context Value Trap:**
+> Lookups using `.Value(key)` traverse the context chain upwards recursively. Searching for a key requires **$O(N)$ linear time complexity**, where $N$ is the depth of the context tree.
+> * **Rules of Thumb:** Never use context values for optional function parameters, configuration objects, or high-throughput transaction stores. Use them exclusively for request-scoped metadata (e.g., Auth tokens, Request IDs, or trace IDs).
+
+---
+
+### 🛠️ Generics & GC-Shape Stenciling
+
+Introduced in Go 1.18, generics enable compile-time type safety without sacrificing performance. Different languages implement generics differently:
+- **C++ (Monomorphization):** Generates dedicated compiled code for every unique type argument combination. Results in fast runtime but massive binary bloat.
+- **Java (Type Erasure):** Replaces type parameters with `Object` and inserts dynamic runtime casts. Zero binary bloat but causes heap allocation/boxing overhead.
+
+#### Go's Solution: GC-Shape Stenciling with Dictionaries
+Go implements a hybrid approach to maintain fast compilation and small binary sizes while keeping execution swift:
+
+1. **GC-Shape (Gshape) Grouping:** The compiler groups type parameters by their garbage collection properties.
+   - All pointer types (e.g., `*User`, `*Item`, `*string`) share the same Gshape because they are represented as 8-byte addresses.
+   - Integral types of the same size share Gshapes.
+2. **Dictionary Passing:** The compiler generates a single, shared binary function for each Gshape. To handle type-specific behaviors (like invoking methods or comparing values), it implicitly passes a **type dictionary** to the compiled function at runtime containing sizes, hashes, and method pointers.
+
+---
+
+### ⚠️ Modern Error Handling: wrapping, Is, and As
+
+Go does not use exceptions; errors are values. Go 1.13+ added standardized error wrapping, and Go 1.20 extended this to support multi-error wrapping.
+
+#### The Wrapping Protocol
+Any error that implements the `Unwrap() error` method is considered a wrapped error. Since Go 1.20, errors can also implement `Unwrap() []error` to support multiple parents (e.g., `errors.Join()`).
+
+* **`errors.Is(err, target)`:** Recursively walks the error wrapper tree using `Unwrap()`. Returns `true` if any error in the chain matches the `target` value. Useful for checking sentinel errors (e.g., `errors.Is(err, sql.ErrNoRows)`).
+* **`errors.As(err, target)`:** Recursively walks the error chain. If an error matches the type of `target` (which must be a pointer to an error type), it sets the target variable and returns `true`. Useful for extracting custom error structs:
+
+```go
+var pathErr *os.PathError
+if errors.As(err, &pathErr) {
+    fmt.Println("Failed path:", pathErr.Path)
+}
+```
+
+---
+
 ## 🌐 Four: Networking & APIs (HTTP vs gRPC)
 
 ### 🚀 Networking & API Speed Sheet (Read in 10s)
@@ -388,6 +562,7 @@ This section is engineered to be your primary companion during a live interview.
 | **Why does Go use `make` vs. `new`?** | `new` allocates **zeroed memory** returning `*T`; `make` **initializes internal headers** for slices, maps, and channels. | - `new(T)` returns a pointer (`*T`) to a zero-filled type `T` (works on all types).<br>- `make(T, args)` is restricted exclusively to slices, maps, and channels; it sets up complex internal runtime headers (like backing arrays, `hmap` bucket pointers, or `hchan` circular buffers). |
 | **How does Go 1.22 fix the loop variable bug?** | Loop variables are now **freshly allocated per iteration**, resolving closures capturing the same address. | Prior to 1.22, a loop variable shared a single memory address across all iterations. Goroutines launched inside the loop captured that same pointer, leading to race conditions. Since 1.22, the compiler generates a new scope and allocation per iteration. |
 | **How do you safely detect race conditions?** | Execute your test suite or runtime binary with the **`-race` compiler flag**. | Enabling the race detector (`go test -race` or `go run -race`) injects thread instrumentation that tracks memory access boundaries. It raises warnings if two concurrent goroutines access the same memory location, where at least one access is a write, without synchronization. |
+| **How does `errors.Is` differ from standard `==` error checks?** | `errors.Is` **traverses the entire wrapped error chain**, whereas `==` only checks direct pointer equality. | - Standard `==` fails if an error has been wrapped using `%w` (e.g. `fmt.Errorf("wrapped: %w", err)`).<br>- `errors.Is` recursively unwraps the error to inspect if the target sentinel error exists anywhere in its tree structure. |
 
 ---
 
@@ -401,6 +576,9 @@ This section is engineered to be your primary companion during a live interview.
 | **What is Profile-Guided Optimization (PGO)?** | PGO lets the compiler **optimize code generation** using real performance profiles collected from production. | Introduced in Go 1.20, PGO allows the compiler to optimize code generation (e.g., devirtualizing interface calls, aggressive function inlining) using real performance profiles collected from production, boosting CPU efficiency by 2% to 14%. |
 | **What are contiguous stacks in Go?** | Go uses **dynamic contiguous stacks** that automatically double in size and copy values when exhausted. | If a goroutine requires more stack space than its current frame provides, Go allocates a new, double-sized contiguous memory block, copies the old stack, updates all pointers, and frees the old block. |
 | **Why are maps not concurrent safe?** | To **maximize raw speed**; Go chooses immediate crashes over silent data corruption on concurrent writes. | To maximize execution speed. Concurrent map writes set a flag; if Go detects simultaneous read/write or write/write operations, it calls `throw()` to trigger an immediate, non-recoverable runtime crash. |
+| **Why is `uintptr` unsafe to store pointers?** | Because the **GC does not track `uintptr`**, so the referenced memory can be garbage-collected at any time. | - `unsafe.Pointer` is a real pointer tracked by the garbage collector.<br>- `uintptr` is a plain integer. If a heap-allocated object is only referenced via a `uintptr` (after conversion), the GC treats it as unreachable and may sweep it, leading to dangling pointers/corruption. |
+| **Why does context lookup take $O(N)$ time?** | Each `WithValue` call creates a new node in a **singly-linked list traversing upwards**, rather than using a hash map. | - Context is designed to be immutable and concurrent-safe without complex locking/synchronization.<br>- Storing values creates a parent-child chain. Resolving `.Value(key)` recursively bubbles up to the root. Thus, depth $N$ results in $O(N)$ lookups. |
+| **Does Go support class inheritance?** | **No; Go uses composition** via struct embedding, which promotes fields and methods but does not establish a subtype relation. | 1. **No subclassing:** Embedding anonymous structs promotes fields/methods to the outer type, but doesn't allow subtyping (you cannot pass the outer struct where the inner type is expected).<br>2. **Delegation, not inheritance:** The outer struct delegates calls to the inner struct. Fields can be shadowed (overridden), but the inner fields remain explicitly accessible via their type name. |
 
 ---
 
@@ -694,6 +872,71 @@ func (wp *WorkerPool) Stop() {
 	close(wp.tasksChan)
 	wp.wg.Wait()
 	close(wp.resultsChan)
+}
+```
+</details>
+
+---
+
+### Exercise 3: High-Performance Token Bucket Rate Limiter
+
+This design implements a thread-safe **Token Bucket** rate limiter using lock-based synchronization and time math rather than high-overhead background tickers, ensuring sub-10ns evaluations.
+
+<details>
+<summary><b>🛠️ Click to view Rate Limiter Implementation</b></summary>
+
+```go
+package rate
+
+import (
+	"sync"
+	"time"
+)
+
+// Limiter implements a high-performance thread-safe rate limiter.
+type Limiter struct {
+	mu           sync.Mutex
+	capacity     float64
+	tokens       float64
+	ratePerSec   float64
+	lastRefilled time.Time
+}
+
+// NewLimiter creates a new Token Bucket Limiter.
+func NewLimiter(capacity, ratePerSec float64) *Limiter {
+	return &Limiter{
+		capacity:     capacity,
+		tokens:       capacity,
+		ratePerSec:   ratePerSec,
+		lastRefilled: time.Now(),
+	}
+}
+
+// Allow is shorthand for AllowN(now, 1).
+func (l *Limiter) Allow() bool {
+	return l.AllowN(time.Now(), 1)
+}
+
+// AllowN checks if n tokens can be consumed. Refills dynamically.
+func (l *Limiter) AllowN(now time.Time, n float64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Dynamic lazy refill instead of resource-intensive active tickers
+	elapsed := now.Sub(l.lastRefilled).Seconds()
+	l.lastRefilled = now
+
+	l.tokens += elapsed * l.ratePerSec
+	if l.tokens > l.capacity {
+		l.tokens = l.capacity
+	}
+
+	if l.tokens >= n {
+		l.tokens -= n
+		return true
+	}
+
+	return false
 }
 ```
 </details>
