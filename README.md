@@ -546,11 +546,70 @@ go build -gcflags="-m -l" main.go
 ## 🧩 Three: Go Language Deep-Dives
 
 ### 🚀 Language Semantics Speed Sheet (Read in 10s)
+* **Pointers:** Holds a memory address pointing to a value. Go is strictly pass-by-value; passing a pointer copies the memory address (8 bytes), still referencing the original data. No pointer arithmetic is allowed for safety.
 * **Slices:** 24-byte header referencing a backing array. Contains `Data` pointer, `Len`, and `Cap`.
 * **Slice Growth:** Doubles if $< 256$ elements. For larger sizes, grows by a scaling factor transitioning smoothly toward $1.25\times$.
 * **Maps:** Pointer to an `hmap` struct holding a collection of 8-item buckets (`bmap`). Concurrent read/write throws a non-recoverable runtime panic.
 * **Interface Nil Trap:** Interfaces hold `type` and `data` fields. An interface is only `nil` if **both** fields are `nil`.
 * **Defer:** Executed LIFO at function exit. Arguments are evaluated **immediately** when the `defer` line is encountered, not when executing.
+
+---
+
+### Pointers & Memory Address Mechanics
+
+A **pointer** is a variable that stores the memory address of another value, rather than the value itself.
+
+```mermaid
+graph LR
+    subgraph Mem ["Memory Layout"]
+        VarX["Variable 'x'<br>Address: 0xc0000140b8<br>Value: 42"]
+        PtrP["Pointer 'p'<br>Address: 0xc0000140c0<br>Value: 0xc0000140b8"]
+    end
+    PtrP -->|points to| VarX
+    
+    style VarX fill:#BBDEFB,stroke:#1976D2,stroke-width:2px,color:#000
+    style PtrP fill:#FFE0B2,stroke:#F57C00,stroke-width:2px,color:#000
+```
+
+#### Core Operators
+* **`&` (Address-of):** Generates a pointer to a variable. E.g., `p := &x` stores the address of `x` in `p`.
+* **`*` (Dereference):** Accesses or modifies the value at the address stored in a pointer. E.g., `*p = 100` modifies the original variable `x`.
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	x := 42
+	p := &x // Type of p is *int (pointer to int)
+
+	fmt.Printf("Value of x: %d\n", x)        // 42
+	fmt.Printf("Memory address of x: %p\n", p) // e.g. 0xc0000140b8
+	fmt.Printf("Value via pointer: %d\n", *p)   // 42
+
+	*p = 100 // Dereferencing to modify x
+	fmt.Printf("New value of x: %d\n", x)     // 100
+}
+```
+
+#### The 5 Pillars of Go Pointers (High-Yield Interview Focus)
+
+1. **Strict Pass-by-Value Semantics:**
+   Go is strictly pass-by-value. When a pointer is passed to a function, Go copies the **pointer value** (the 8-byte memory address). The caller and callee have different pointer variables, but because they hold the same memory address, mutating the dereferenced value inside the function alters the original caller's data.
+   
+2. **Zero Pointer Arithmetic (Safety):**
+   Unlike C/C++, Go does not allow pointer arithmetic (e.g., `p++` to jump to the next memory address is a compile-time error). This prevents buffer overflows, segment faults, and arbitrary memory corruption. For low-level runtime implementation, Go provides `unsafe.Pointer` and `uintptr`, but these bypass compile-time safety and garbage collection tracking.
+
+3. **The `nil` Pointer Trap:**
+   The zero-value of a pointer is `nil`. Attempting to dereference a `nil` pointer (e.g., `var p *int; *p = 1`) triggers an immediate, unrecoverable runtime panic: `panic: runtime error: invalid memory address or nil pointer dereference`.
+
+4. **Escape Analysis Decisions:**
+   Declaring a pointer or taking a variable's address often triggers **Escape Analysis** to move the allocation from the stack to the heap. For example, returning a pointer to a local variable from a function causes that variable to escape because its lifetime exceeds the function's stack frame.
+
+5. **Value vs. Pointer Receivers:**
+   * **Pointer Receiver (`(t *T)`):** Must be used if the method mutates the receiver's state, or to avoid copying large structs (since copying a pointer is only 8 bytes, whereas copying a large struct degrades performance).
+   * **Value Receiver (`(t T)`):** The method operates on a copy of the receiver. Safe for read-only concurrency, but modifications do not propagate back to the caller.
 
 ---
 
