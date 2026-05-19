@@ -48,7 +48,7 @@ It preserves deep technical accuracy while presenting complex topics in a "scan-
 
 ### The Go M:N Scheduler Architecture
 
-Go uses an **M:N user-space scheduler** to multiplex Goroutines across physical kernel threads without OS overhead.
+Go uses an **M:N user-space scheduler** to multiplex Goroutines across physical kernel threads without OS overhead. The scheduler maps $M$ goroutines onto $N$ OS threads. Each OS thread binds to a logical processor (`P`) which maintains a local run queue (LRQ). If a local queue is empty, the scheduler will attempt work stealing from other local queues. If local queues are full, it will stack (overflow) goroutines onto the global run queue (GRQ).
 
 ```mermaid
 graph TD
@@ -153,7 +153,7 @@ type hchan struct {
 
 ### Buffered vs. Unbuffered Channels: Internal Mechanics & Trade-offs
 
-The core behavior of a Go channel is governed by whether it is **unbuffered** (capacity = 0) or **buffered** (capacity > 0).
+The core behavior of a Go channel is governed by whether it is **unbuffered** (capacity = 0) or **buffered** (capacity > 0). Channels safely communicate goroutines: unbuffered channels only complete the send operation when a receiver actually reads the sender's data, while buffered channels can receive values continuously until the buffer capacity is full.
 
 ```mermaid
 graph TD
@@ -261,7 +261,7 @@ Go provides a built-in ThreadSanitizer-backed race detector.
 
 ### 🔒 Mutexes: Mutual Exclusion & sync.Mutex
 
-To prevent data races, Go offers `sync.Mutex` (Mutual Exclusion). It ensures that only one Goroutine can enter a critical section at any given time.
+`sync.Mutex` prevents race conditions—situations where multiple goroutines try to access a critical section of the code at the same time—by ensuring that only one Goroutine can enter a critical section at any given time.
 
 #### 1. Internal Structure of `sync.Mutex`
 Under the hood (in `sync/mutex.go`), a Mutex is an extremely lightweight struct occupying just **8 bytes**:
@@ -381,7 +381,7 @@ func main() {
 
 ### 👥 Coordinating Workers with sync.WaitGroup
 
-`sync.WaitGroup` is a synchronization primitive used to block execution until a collection of concurrent goroutines have finished running.
+`sync.WaitGroup` synchronizes the work of multiple concurrent goroutines. It blocks execution and waits for the completion of each of them before proceeding further.
 
 #### 1. Internal Structure of `sync.WaitGroup`
 A WaitGroup is defined as:
@@ -499,7 +499,7 @@ func main() {
 
 ### The Tri-Color Mark & Sweep GC
 
-Go uses a concurrent, tri-color mark-and-sweep garbage collector designed for low latency.
+Go uses a concurrent, tri-color mark-and-sweep garbage collector designed for low latency. The garbage collector starts with all objects initially marked as **white**. It then scans the roots, marking them **gray**. Since objects contain references, the GC traverses through those lists to mark the referenced target objects as **gray**, and once all references from an object are scanned, that parent object becomes **black**. This traversal continues until there are no more gray objects. Finally, all remaining white objects are garbage collected.
 
 ```mermaid
 graph LR
@@ -519,9 +519,9 @@ graph LR
     style Black fill:#263238,stroke:#212121,stroke-width:2px,color:#fff
 ```
 
-1. **White Set (Unvisited):** Candidates for deletion. At the start of a GC cycle, all objects are White.
-2. **Gray Set (Visited, Unexplored):** Reachable from roots, but their children have not been scanned yet.
-3. **Black Set (Visited & Explored):** Reachable, and all child pointers have been fully scanned. Black objects contain no pointers directly to White objects.
+1. **White Set (Unvisited):** Garbage collection candidates. At the start of a GC cycle, all objects are White.
+2. **Gray Set (Visited, Unexplored):** Reachable objects to be processed in the future.
+3. **Black Set (Visited & Explored):** Reachable, fully explored objects. Black objects contain no pointers directly to White objects.
 
 #### The GC Process:
 * **Phase 1: Sweep Termination (STW - Stop The World):** Prepares for marking, activates write barriers.
@@ -559,18 +559,19 @@ go build -gcflags="-m -l" main.go
 ## 🧩 Three: Go Language Deep-Dives
 
 ### 🚀 Language Semantics Speed Sheet (Read in 10s)
-* **Pointers:** Holds a memory address pointing to a value. Go is strictly pass-by-value; passing a pointer copies the memory address (8 bytes), still referencing the original data. No pointer arithmetic is allowed for safety.
+* **Pass-by-Value:** Go strictly passes everything by value (copies the variable's value or header metadata).
+* **Pointers:** Points to a specific location in memory. Passing a pointer copies the 8-byte memory address, still referencing the original data. No pointer arithmetic is allowed for safety.
 * **Slices:** 24-byte header referencing a backing array. Contains `Data` pointer, `Len`, and `Cap`.
 * **Slice Growth:** Doubles if $< 256$ elements. For larger sizes, grows by a scaling factor transitioning smoothly toward $1.25\times$.
 * **Maps:** Pointer to an `hmap` struct holding a collection of 8-item buckets (`bmap`). Concurrent read/write throws a non-recoverable runtime panic.
 * **Interface Nil Trap:** Interfaces hold `type` and `data` fields. An interface is only `nil` if **both** fields are `nil`.
-* **Defer:** Executed LIFO at function exit. Arguments are evaluated **immediately** when the `defer` line is encountered, not when executing.
+* **Defer:** Postpones function execution until the surrounding function returns. Executed in LIFO (Last-In, First-Out) order. Arguments are evaluated **immediately** when the `defer` line is encountered, not when executing.
 
 ---
 
 ### Pointers & Memory Address Mechanics
 
-A **pointer** is a variable that stores the memory address of another value, rather than the value itself.
+A **pointer** is a variable that points to a specific location in memory (storing the memory address of another value).
 
 ```mermaid
 graph LR
@@ -680,6 +681,16 @@ A Go map is a pointer to an `hmap` struct. Maps are implemented as a collection 
 * **Why maps are NOT thread-safe:** Maps are optimized for speed. Reading/writing maps concurrently sets a `flags` bit in `hmap`. If the runtime detects a write while another operation is in progress, it triggers a non-recoverable runtime crash: `fatal error: concurrent map writes`.
 * **How to make them safe:** Wrap the map in a struct with a `sync.RWMutex`, or use `sync.Map`.
 
+#### 🗺️ Map vs. Array: Key Differences
+
+| Feature | Map (`map[K]V`) | Array (`[N]T`) |
+| :--- | :--- | :--- |
+| **Sizing** | Dynamic. Can grow and shrink dynamically as keys are added/removed. | Fixed size. Size is part of the type (e.g. `[5]int` vs `[10]int`). |
+| **Lookup Time** | $O(1)$ average case (hash table lookup). | $O(1)$ worst case (direct index access). |
+| **Memory Layout** | Non-contiguous bucket structure (`hmap` pointing to multiple `bmap` buckets). | Contiguous block of memory. Highly cache-friendly. |
+| **Thread Safety** | **Not thread-safe**. Concurrent writes trigger a fatal runtime panic. | Safe for concurrent reads/writes to *disjoint* indices. |
+| **Key Types** | Any comparable type can be a key. | Indices must be non-negative integers. |
+
 ---
 
 ### The Interface Nil Trap
@@ -749,7 +760,7 @@ type GoodStruct struct {
 
 ### 🧩 Struct Embedding: Composition, Not Inheritance
 
-Go intentionally does not support class inheritance. Instead, it embraces the principle of **Composition over Inheritance** using **Struct Embedding**.
+Go does not support class inheritance. Instead, it embraces **composition**. Composition means embedding one struct inside another so that the parent struct can use the fields and methods of the embedded struct.
 
 #### What is Struct Embedding?
 When you define a struct field without an explicit field name, it is an **embedded (or anonymous) field**. The outer struct automatically gains access to all the fields and methods of the embedded struct. This mechanism is known as **field and method promotion**.
