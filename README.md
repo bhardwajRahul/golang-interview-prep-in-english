@@ -106,6 +106,19 @@ graph TD
 
 ### Channels & the `hchan` Struct
 
+A **channel** is a typed conduit in Go that enables concurrent goroutines to communicate by sending and receiving values, while automatically synchronizing their execution. Channels are the concrete implementation of **Communicating Sequential Processes (CSP)**, aligning with Go's core concurrency philosophy:
+
+> **"Do not communicate by sharing memory; instead, share memory by communicating."**
+
+#### Core Characteristics
+* **Type Safety:** Channels are strongly typed (e.g., `chan int`, `chan string`). A channel can only transmit values of its declared element type.
+* **Synchronization:** Beyond data transmission, channels act as synchronization barriers, allowing goroutines to coordinate their execution states without explicit mutexes or condition variables.
+* **Reference Type:** Channels are reference types. When you call `make(chan T)`, you allocate memory on the heap and receive a pointer to the underlying runtime structure.
+
+---
+
+#### Under the Hood: The `hchan` Struct
+
 Under the hood, a Go channel is not a magical pipe; it is a pointer to an `hchan` struct (defined in `runtime/chan.go`):
 
 ```go
