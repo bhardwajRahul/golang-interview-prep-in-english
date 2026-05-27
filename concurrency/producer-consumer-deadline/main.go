@@ -8,9 +8,8 @@ import (
 	"time"
 )
 
-func producer(mu *sync.Mutex, ctx context.Context, ch chan<- int, wg *sync.WaitGroup, index int) {
+func producer(ctx context.Context, ch chan<- int, wg *sync.WaitGroup, index int) {
 	defer wg.Done()
-
 	for i := 0; i < 10; i++ {
 		// Symulujemy pracę producenta.
 		select {
@@ -32,18 +31,13 @@ func producer(mu *sync.Mutex, ctx context.Context, ch chan<- int, wg *sync.WaitG
 	}
 }
 
-func consumer(ch <-chan int, wg *sync.WaitGroup, index int) {
+func consumer(ch <-chan int, wg *sync.WaitGroup, mu sync.Mutex, values *[]int) {
 	defer wg.Done()
-	var values []int
 
 	for v := range ch {
-		values = append(values, v)
-	}
-
-	sort.Ints(values)
-
-	for _, v := range values {
-		fmt.Printf("Consumer %d received: %d\n", index, v)
+		mu.Lock()
+		*values = append(*values, v)
+		mu.Unlock()
 	}
 }
 func main() {
@@ -51,21 +45,27 @@ func main() {
 	mu := sync.Mutex{}
 	wg := sync.WaitGroup{}
 	wp := sync.WaitGroup{}
+	values := []int{}
 	ctx, cancel := context.WithTimeout(context.Background(), 1000*time.Millisecond)
 	defer cancel()
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 
-		go producer(&mu, ctx, ch, &wg, i)
+		go producer(ctx, ch, &wg, i)
 	}
 	for i := 0; i < 10; i++ {
 		wp.Add(1)
 
-		go consumer(ch, &wp, i)
+		go consumer(ch, &wp, mu, &values)
 	}
 	wg.Wait()
 	close(ch)
 	wp.Wait()
+	sort.Ints(values)
 
-	println("Done")
+	for _, v := range values {
+		fmt.Println("Received: ", v)
+	}
+
+	fmt.Println("Done")
 }
