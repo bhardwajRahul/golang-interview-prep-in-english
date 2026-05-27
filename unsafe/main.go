@@ -1,15 +1,20 @@
 package main
 
+import "sync"
+
 type MemoryArena[T any] struct {
 	buffer []T
 	offset int
+	mu     sync.Mutex
 }
 
 func NewMemoryArena[T any](size int) *MemoryArena[T] {
-	return &MemoryArena[T]{buffer: make([]T, size)}
+	return &MemoryArena[T]{buffer: make([]T, size), mu: sync.Mutex{}}
 }
 
 func (a *MemoryArena[T]) Alloc(obj T) *T {
+	defer a.mu.Unlock()
+	a.mu.Lock()
 	if a.offset >= len(a.buffer) {
 		panic("out of memory")
 	}
@@ -20,6 +25,8 @@ func (a *MemoryArena[T]) Alloc(obj T) *T {
 }
 
 func (a *MemoryArena[T]) Reset() {
+	defer a.mu.Unlock()
+	a.mu.Lock()
 	a.offset = 0
 	// Optional: zero entries so the GC can collect anything they referenced.
 	// Only matters if T contains pointers.
