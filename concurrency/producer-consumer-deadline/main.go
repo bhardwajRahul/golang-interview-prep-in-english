@@ -11,7 +11,6 @@ import (
 func producer(ctx context.Context, ch chan<- int, wg *sync.WaitGroup, index int) {
 	defer wg.Done()
 	for i := 0; i < 10; i++ {
-		// Symulujemy pracę producenta.
 		select {
 		case <-ctx.Done():
 			fmt.Printf("Producer %d stopped: %v\n", index, ctx.Err())
