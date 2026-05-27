@@ -43,24 +43,24 @@ func consumer(ch <-chan int, wg *sync.WaitGroup, mu *sync.Mutex, values *[]int) 
 func main() {
 	ch := make(chan int, 10)
 	mu := sync.Mutex{}
-	wg := sync.WaitGroup{}
-	wp := sync.WaitGroup{}
+	producerWG := sync.WaitGroup{}
+	consumerWG := sync.WaitGroup{}
 	values := []int{}
 	ctx, cancel := context.WithTimeout(context.Background(), 1000*time.Millisecond)
 	defer cancel()
 	for i := 0; i < 10; i++ {
-		wg.Add(1)
+		producerWG.Add(1)
 
-		go producer(ctx, ch, &wg, i)
+		go producer(ctx, ch, &producerWG, i)
 	}
 	for i := 0; i < 10; i++ {
-		wp.Add(1)
+		consumerWG.Add(1)
 
-		go consumer(ch, &wp, &mu, &values)
+		go consumer(ch, &consumerWG, &mu, &values)
 	}
-	wg.Wait()
+	producerWG.Wait()
 	close(ch)
-	wp.Wait()
+	consumerWG.Wait()
 	sort.Ints(values)
 
 	for _, v := range values {
